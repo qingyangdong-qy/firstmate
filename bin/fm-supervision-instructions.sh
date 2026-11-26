@@ -267,6 +267,7 @@ if [ -n "$HOST_SNIPPET" ]; then
   printf '%s\n' '- Supervision host: on; it takes away-posture wakes and, where the dialog mirror is verified, eligible attended wakes itself, and hands the rest to you (protocol at the end of this block).'
 fi
 ordinary_wake_line
+printf '%s\n' '- Shell: never use a top-level cd; use git -C <path> or (cd <path> && ...).'
 printf '\n'
 render_snippet
 printf '\n'
