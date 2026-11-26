@@ -2419,6 +2419,107 @@ EOF
   pass "--reemit reprints the digest without repeating startup's mutating sweeps and still drains queued wakes"
 }
 
+# prepare_post_compaction_world <name> [backend]: a home that has taken the
+# helm, with one held backlog row, one crew record whose meta, status tail, and
+# curated memory each carry a marker that only the full digest may print, and a
+# wake queued after startup. Echoes "<root>|<home>|<fakebin>|<tasks-axi log>".
+prepare_post_compaction_world() {
+  local name=$1 backend=${2:-tasks-axi} rec root home fakebin log
+  rec=$(new_world "$name")
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  if [ "$backend" = manual ]; then
+    printf '%s\n' manual > "$home/config/backlog-backend"
+  else
+    make_fake_tasks_axi_compact "$fakebin"
+  fi
+  write_long_body_backlog "$home/data/backlog.md"
+  printf 'kind=ship\nproject=%s\nworktree=META-BODY-MARKER\n' "$home/projects/firstmate" \
+    > "$home/state/compact-crew.meta"
+  printf '%s\n' 'paused: STATUS-TAIL-MARKER waiting on CI' > "$home/state/compact-crew.status"
+  printf '%s\n' 'CAPTAIN-MEMORY-MARKER prefers short replies' > "$home/data/captain.md"
+  log="$home/tasks-axi.log"
+  FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_HARNESS_PID=$$ \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null
+  wait_for_network_stage "$home" "$root" \
+    || fail "the $name startup fixture's deferred network stage never published"
+  : > "$log"
+  append_wake "$home/state" signal compact-crew "done: queued after compaction" \
+    || fail "seed wake failed"
+  printf '%s|%s|%s|%s\n' "$root" "$home" "$fakebin" "$log"
+}
+
+run_reemit() {  # <home> <root> <path> <log> <source>
+  FM_FAKE_TASKS_AXI_LOG="$4" FM_HOME="$1" FM_ROOT_OVERRIDE="$2" FM_FAKE_HARNESS_PID=$$ PATH="$3" \
+    env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    "$SESSION_START" --reemit --source "$5"
+}
+
+test_post_compaction_reemit_prints_only_holds_and_active_crew() {
+  local rec root home fakebin log out
+  rec=$(prepare_post_compaction_world post-compaction)
+  IFS='|' read -r root home fakebin log <<EOF
+$rec
+EOF
+
+  out=$(run_reemit "$home" "$root" "$fakebin:$BASE_PATH" "$log" compact)
+
+  assert_contains "$out" "done: queued after compaction" "the post-compaction digest skipped the wake drain"
+  assert_contains "$out" "- Shell: never use a top-level cd" "the post-compaction digest omitted the supervision block"
+  assert_contains "$out" "held-queued,queued,ship,firstmate,Held queued work" "the post-compaction digest omitted the hold list"
+  assert_contains "$(cat "$log")" "--state held --fields hold_kind" \
+    "the post-compaction hold list asked tasks-axi for more than the hold kind"
+  assert_not_contains "$(cat "$log")" "--state in_flight" "the post-compaction digest listed in-flight backlog rows"
+  assert_not_contains "$(cat "$log")" "ready" "the post-compaction digest listed the ready queue"
+  assert_contains "$out" "compact-crew kind=ship project=firstmate
+endpoint: unknown (no window recorded)" "the post-compaction digest omitted the active crew line"
+  assert_contains "$out" "bin/fm-tasks-axi.sh show <id> --full" "the post-compaction digest omitted the pointer to the rest"
+  assert_not_contains "$out" "META-BODY-MARKER" "the post-compaction digest reprinted a crew record"
+  assert_not_contains "$out" "STATUS-TAIL-MARKER" "the post-compaction digest reprinted a status tail"
+  assert_not_contains "$out" "CAPTAIN-MEMORY-MARKER" "the post-compaction digest reprinted curated memory"
+  assert_not_contains "$out" "READ-ONCE CONTRACT" "the post-compaction digest kept the full digest's read-once contract"
+  assert_contains "$out" "The post-compaction digest above is complete." "the post-compaction digest omitted its closing line"
+
+  pass "a post-compaction re-emit prints only the holds and active crew, plus where the rest is"
+}
+
+test_clear_reemit_keeps_the_full_digest() {
+  local rec root home fakebin log out
+  rec=$(prepare_post_compaction_world clear-reemit)
+  IFS='|' read -r root home fakebin log <<EOF
+$rec
+EOF
+
+  out=$(run_reemit "$home" "$root" "$fakebin:$BASE_PATH" "$log" clear)
+
+  assert_not_contains "$out" "POST-COMPACTION STATE" "a clear re-emit used the post-compaction digest"
+  assert_contains "$out" "META-BODY-MARKER" "a clear re-emit dropped the crew record"
+  assert_contains "$out" "STATUS-TAIL-MARKER" "a clear re-emit dropped the status tail"
+  assert_contains "$out" "CAPTAIN-MEMORY-MARKER" "a clear re-emit dropped curated memory"
+
+  pass "a clear re-emit keeps the full digest"
+}
+
+test_post_compaction_holds_on_manual_backend_list_held_title_lines() {
+  local rec root home fakebin log out holds
+  rec=$(prepare_post_compaction_world post-compaction-manual manual)
+  IFS='|' read -r root home fakebin log <<EOF
+$rec
+EOF
+
+  out=$(run_reemit "$home" "$root" "$fakebin:$BASE_PATH" "$log" compact)
+  holds=$(printf '%s\n' "$out" | sed -n '/^Holds (data\/backlog.md)$/,/^Active crew/p' | grep '^- ')
+
+  assert_equals "- [ ] compact-startup - Compact startup digest (repo: firstmate) (kind: ship) (since 2026-07-15) (hold: captain choice pending) (hold-kind: captain)
+- [ ] held-queued - Held queued work (repo: firstmate) (kind: ship) (hold: captain choice pending) (hold-kind: captain)" "$holds" \
+    "the manual-backend post-compaction hold list was not exactly the held title lines"
+
+  pass "a manual-backend post-compaction hold list prints exactly the held title lines"
+}
+
 test_agents_baseline_stays_at_true_start_and_reemits_on_every_drifted_pi_compact() {
   local rec root home fakebin startup compact_equal compact_first compact_second clear_out resume_out reset_out baseline baseline_after expected_hash refresh_line bootstrap_line
   rec=$(new_world agents-refresh)
@@ -3061,6 +3162,9 @@ test_portable_timeout_escalates_term_resistant_process
 test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
 test_reemit_skips_startup_sweeps_but_keeps_the_wake_drain
+test_post_compaction_reemit_prints_only_holds_and_active_crew
+test_clear_reemit_keeps_the_full_digest
+test_post_compaction_holds_on_manual_backend_list_held_title_lines
 test_agents_baseline_stays_at_true_start_and_reemits_on_every_drifted_pi_compact
 test_read_only_pi_compact_refreshes_against_its_own_session_identity
 test_codex_unreachable_reset_sources_do_not_claim_instruction_refresh

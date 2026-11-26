@@ -283,6 +283,16 @@ test_pi_snippet_uses_effective_extension_path() {
   pass "pi supervision snippet renders the effective extension path"
 }
 
+test_every_harness_block_states_the_no_top_level_cd_rule() {
+  local harness out
+  for harness in claude codex opencode pi pi-signed grok cursor omp unknown; do
+    out=$("$RENDER" --harness "$harness")
+    assert_contains "$out" "- Shell: never use a top-level cd; use git -C <path> or (cd <path> && ...)." \
+      "$harness: the supervision block omitted the no-top-level-cd rule"
+  done
+  pass "every harness's supervision block tells the supervisor to avoid a top-level cd"
+}
+
 test_supervision_host_protocol_only_on_an_opted_in_claude_home
 test_supervision_host_protocol_on_every_arm_owner
 test_selected_harness_block_only
@@ -295,3 +305,4 @@ test_pi_signed_preserves_identity_with_pi_supervision_protocol
 test_grok_is_background_notify
 test_grok_command_sources_effective_config
 test_pi_snippet_uses_effective_extension_path
+test_every_harness_block_states_the_no_top_level_cd_rule
